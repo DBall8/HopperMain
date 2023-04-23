@@ -96,15 +96,12 @@ static Atmega328Timer servoTimer(Timer::TIMER_1,
                                 0xffff,
                                 nullptr);
 
-static IServo servo(&servoTimer, &servoSig, MIN_SERVO_MICRO_S, MAX_SERVO_MICRO_S);
+static IServo servo(&servoTimer, &servoSig, MIN_SERVO_MICRO_S, MAX_SERVO_MICRO_S, MIN_SERVO_ANGLE, MAX_SERVO_ANGLE);
 
 static DoorController doorController(
     &servo,
     &servoFeedbackAdc,
-    &ticHandler,
-    DOOR_ANG_VEL
-    //, &servoEn
-    );
+    &ticHandler);
 DoorController* pDoor = &doorController;
 
 static Atmega328Eeprom eeprom(&intControl);

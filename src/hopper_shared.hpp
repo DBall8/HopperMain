@@ -2,8 +2,8 @@
 #define HOPPER_SHARED_HPP
 
 // Wifi to Main messages
-const static char PASS_STR[] = "<PASS";
-const static char FAIL_STR[] = "<FAIL";
+const static char* PASS_STR = "<PASS";
+const static char* FAIL_STR = "<FAIL";
 const static char* ECHO_RESP_STR = "<ECHO RESP";
 const static char* DISCONNECTED_STR = "<DC";
 const static char* CONNECTED_STR = "<CN";
@@ -17,5 +17,6 @@ const static char* WIFI_CMD_STR = "WIFI";
 const static char* ID_CMD_STR = "ID";
 const static char* CLEAR_CMD_STR = "CLEAR";
 const static char* MAIN_STATUS_CMD_STR = STATUS_CMD+1;
+const static char* GET_CMD_STR = "L";
 
 #endif

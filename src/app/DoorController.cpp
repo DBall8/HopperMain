@@ -4,6 +4,7 @@
 #include "config.hpp"
 #include "hopper_shared.hpp"
 #include "cli/WifiCli.hpp"
+#include "utilities/Conversions.hpp"
 
 using namespace Servo;
 using namespace Adc;
@@ -11,10 +12,9 @@ using namespace Dio;
 
 namespace Hopper
 {
-    const static uint16_t POWER_TIMEOUT_MS = 15 * 1000;
     const static uint16_t CAL_DELAY_MS = 500;
 
-    static float adcToAngle(
+    float DoorController::adcToAngle(
         uint16_t adcAtMin,
         uint16_t adcAtMax,
         uint16_t adcAngle)
@@ -23,45 +23,34 @@ namespace Hopper
         // Ensure we do not go negative
         if (adcAngle > adcAtMin)
         {
-            numerator = (adcAngle - adcAtMin) * (SERVO_MAX_ANGLE - SERVO_MIN_ANGLE);
+            numerator = (adcAngle - adcAtMin) * (pServo_->getMaxAngle() - pServo_->getMinAngle());
         }
 
         float adcRange = (adcAtMax - adcAtMin);
-        return (numerator / adcRange) + SERVO_MIN_ANGLE; 
+        return (numerator / adcRange) + pServo_->getMinAngle(); 
     }
 
     DoorController::DoorController(Servo::IServo* pServo,
                            Adc::IAdc* pFeedback,
-                           Tic::TicCounter* pTicHandler,
-                           uint8_t angularVelocity,
-                           Dio::IDio* pServoEn):
+                           Tic::TicCounter* pTicHandler):
         pServo_(pServo),
         pFeedback_(pFeedback),
-        angularVelocity_(angularVelocity),
-        pServoEn_(pServoEn),
         timeoutTimer_(pTicHandler->secondsToTics(DOOR_TIMEOUT_S), pTicHandler),
-        powerTimer_(pTicHandler->msecondsToTics(POWER_TIMEOUT_MS), pTicHandler),
         updateTimer_(SERVO_FEEDBACK_UPDATE_TICS, pTicHandler),
         angleFilter_(10, 0)
     {
         currAngle_ = 0;
         isRunning_ = false;
-        isReturning_ = false;
-        isPowered_ = false;
         currState_ = DOOR_AJAR;
-        targetState_ = DOOR_CLOSED;
-        currCommander_ = Commander::INTERNAL;
 
         pFeedback_->enable();
         pServo_->disable();
-        powerTimer_.enable();
         updateTimer_.enable();
     }
 
     bool DoorController::isCalibrated()
     {
-        return (pCalibration_->adcMax != 0) &&
-               (pCalibration_->angleOpen != 0);
+        return pCalibration_->adcMax != pCalibration_->adcMin;
     }
 
     void DoorController::init()
@@ -72,106 +61,77 @@ namespace Hopper
         pServo_->setAngle(currAngle_);
     }
 
-    void DoorController::powerServo()
+    void DoorController::command(Commander commander,
+                                 float targetAngle,
+                                 bool requireCal)
     {
-        if (pServoEn_ == nullptr) return;
-
-        if (!isPowered_)
+        if ((uint8_t)commander >= (uint8_t)Commander::NUM_COMMANDERS)
         {
-            pServoEn_->set(Level::L_LOW);
-            isPowered_ = true;
-            DELAY(100);
+            handleCommandComplete(false);
+            return;
         }
-        powerTimer_.enable();
+
+        if (targetAngle < pServo_->getMinAngle()) targetAngle = pServo_->getMinAngle();
+        if (targetAngle > pServo_->getMaxAngle()) targetAngle = pServo_->getMaxAngle();
+
+        // To keeps the servo from immediatelly running to whatever angle
+        // it was last set to, measure the current angle and pre-emptively
+        // set to the servo to it. Now, when it turns on, it should jump
+        if (!isRunning_)
+        {
+            findAngle();
+            pServo_->setAngle(currAngle_);
+        }
+
+        targetAngle_ = targetAngle;
+        speed_ = DOOR_ANG_VEL;
+        commander_ = commander;
+        isRunning_ = true;
+        timeoutTimer_.enable();
+        pServo_->enable();
     }
 
     void DoorController::open(Commander commander)
     {
-        if (isReturning_) return;
-        if ((uint8_t)commander >= (uint8_t)Commander::NUM_COMMANDERS) return;
-
-        if (!isRunning_)
+        if (!isCalibrated())
         {
-            findState();
-            pServo_->setAngle(currAngle_);
-        }
-
-        if (isCalibrated())
-        {
-            if (commander != Commander::INTERNAL)
-            {
-                currCommander_ = commander;
-                hasCommandFailed_ = false;
-            }
-            
-            powerServo();
-            targetState_ = HopperState::DOOR_OPEN;
-            timeoutTimer_.enable();
-            isRunning_ = true;
-            pServo_->enable();
-        }
-        else
-        {
-            if (commander == Commander::REMOTE)
-            {
-                PRINTLN(FAIL_STR);
-            }
             PRINTLN("NOT CALIBRATED");
+            handleCommandComplete(false);
+            return;
         }
+
+        command(commander, pCalibration_->angleOpen);
     }
 
     void DoorController::close(Commander commander)
     {
-        if (isReturning_) return;
-        if ((uint8_t)commander >= (uint8_t)Commander::NUM_COMMANDERS) return;
-
-        if (!isRunning_)
+        if (!isCalibrated())
         {
-            findState();
-            pServo_->setAngle(currAngle_);
-        }
-
-        if (isCalibrated())
-        {
-            if (commander != Commander::INTERNAL)
-            {
-                currCommander_ = commander;
-                hasCommandFailed_ = false;
-            }
-
-            powerServo();
-            targetState_ = HopperState::DOOR_CLOSED;
-            timeoutTimer_.enable();
-            isRunning_ = true;
-            pServo_->enable();
-        }
-        else
-        {
-            if (commander == Commander::REMOTE)
-            {
-                PRINTLN(FAIL_STR);
-            }
             PRINTLN("NOT CALIBRATED");
+            handleCommandComplete(false);
+            return;
         }
+
+        command(commander, pCalibration_->angleClosed);
     }
 
     void DoorController::toggle()
     {
-        getAngle();
-        bool closedAngleSmaller = (pCalibration_->angleClosed < pCalibration_->angleOpen);
-        int16_t diffOpen = closedAngleSmaller ?
-            (pCalibration_->angleOpen - currAngle_) :
-            (currAngle_ - pCalibration_->angleOpen);
-        int16_t diffClosed = closedAngleSmaller ?
-            (currAngle_ - pCalibration_->angleClosed) :
-            (pCalibration_->angleClosed - currAngle_);
-        if (diffClosed < diffOpen)
+        if (!isCalibrated())
         {
-            open(Commander::LOCAL);
+            PRINTLN("NOT CALIBRATED");
+            handleCommandComplete(false);
+            return;
+        }
+
+        findState();
+        if (currState_ == DOOR_CLOSED)
+        {
+            command(Commander::LOCAL, pCalibration_->angleOpen);
         }
         else
         {
-            close(Commander::LOCAL);
+            command(Commander::LOCAL, pCalibration_->angleClosed);
         }
     }
 
@@ -182,80 +142,28 @@ namespace Hopper
         return currState_;
     }
 
-    void DoorController::runCalibration(SerialComm::ISerial* pSerial, Watchdog::IWatchdog* pWdt)
+    int16_t DoorController::readPosition()
     {
         bool success = false;
-        powerServo();
-        PRINTLN("Running calibration....");
+        uint32_t sum = 0;
+        uint8_t numSamples = 0;
+        for (uint8_t i=0; i<NUM_POS_SAMPLES; i++)
+        {
+            int16_t feedbackReading = pFeedback_->read(&success);;
+            if (success)
+            {
+                sum += feedbackReading;
+                numSamples++;
+            }
+            DELAY(SAMPLE_DELAY_MS);
+        }
 
-        // Find the ADC reading at the minimum angle
-        pServo_->setAngle(SERVO_MIN_ANGLE);
-        pServo_->enable();
-        DELAY(CAL_DELAY_MS);
-        pServo_->disable();
-        DELAY(CAL_DELAY_MS);
-        int16_t adcMin = readPos();
-        if (adcMin < 0)
-        {
-            PRINTLN("Could not read min ADC");
-            return;
-        }
-        pCalibration_->adcMin = (uint16_t)adcMin;
-        PRINTLN("ADC min: %d", pCalibration_->adcMin);
+        if (numSamples == 0) return -1; // All reads failed
 
-        // Find the ADC at the max angle
-        pServo_->setAngle(SERVO_MAX_ANGLE);
-        pServo_->enable();
-        DELAY(CAL_DELAY_MS);
-        pServo_->disable();
-        DELAY(CAL_DELAY_MS);
-        int16_t adcMax = readPos();
-        if (adcMax < 0)
-        {
-            PRINTLN("Could not read max ADC");
-            return;
-        }
-        pCalibration_->adcMax = (uint16_t)adcMax;
-        PRINTLN("ADC max: %d", pCalibration_->adcMax);
-
-        // Find the desired closed angle
-        PRINTLN("Please close");
-        pSerial->flushRx();
-        while(!pSerial->isDataAvailable())
-        {
-            pWdt->reset();
-        }
-        int16_t adcClosed = readPos();
-        if (adcClosed < 0)
-        {
-            PRINTLN("Could not read closed ADC");
-            return;
-        }
-        PRINTLN("ADC Closed: %d", adcClosed);
-        pCalibration_->angleClosed = static_cast<int16_t>(adcToAngle(adcMin, adcMax, (uint16_t)adcClosed));
-        PRINTLN("Angle Closed: %d", pCalibration_->angleClosed);
-
-        // Find the desired open angle
-        PRINTLN("Please open");
-        pSerial->flushRx();
-        while(!pSerial->isDataAvailable())
-        {
-            pWdt->reset();
-        }
-        int16_t adcOpen = readPos();
-        if (adcOpen < 0)
-        {
-            PRINTLN("Could not read open ADC");
-            return;
-        }
-        PRINTLN("ADC Open: %d", adcOpen);
-        pCalibration_->angleOpen = static_cast<int16_t>(adcToAngle(adcMin, adcMax, (uint16_t)adcOpen));
-        pSerial->flushRx();
-        PRINTLN("Angle Open: %d", pCalibration_->angleOpen);
-        PRINTLN("Complete!");
+        return sum/numSamples;
     }
 
-    float DoorController::getAngle()
+    float DoorController::findAngle()
     {
         if (!isCalibrated())
         {
@@ -263,80 +171,50 @@ namespace Hopper
             return 0;
         }
 
-        // Power is needed in order to read angle
-        powerServo();
+        uint16_t position = readPosition();
+        if (position < 0) return currAngle_;
 
-        int16_t feedbackReading = readPos();
-        if (feedbackReading < 0)
-        {
-            // Failed to read, send last angle to avoid sudden movements
-            return currAngle_;
-        }
-
-        //angleFilter_.addSample((int)feedbackReading);
-
-        currAngle_ = adcToAngle(pCalibration_->adcMin, pCalibration_->adcMax, feedbackReading);
+        currAngle_ = adcToAngle(pCalibration_->adcMin, pCalibration_->adcMax, position);
         return currAngle_;
     }
 
     void DoorController::findState()
     {
-        getAngle();
-
-        if (pCalibration_->angleClosed < pCalibration_->angleOpen)
+        if (!isCalibrated())
         {
-            // Closed is the lower angle
-            if (currAngle_ <= (pCalibration_->angleClosed + DOOR_ANGLE_LEEWAY))
-            {
-                currState_ = HopperState::DOOR_CLOSED;
-            }
-            else if (currAngle_ >= (pCalibration_->angleOpen - DOOR_ANGLE_LEEWAY))
-            {
-                currState_ = HopperState::DOOR_OPEN;
-            }
-            else
-            {
-                currState_ = HopperState::DOOR_AJAR;
-            }
-       }
-       else
-       {
-           // Open is the lower angle
-            if (currAngle_ <= (pCalibration_->angleOpen + DOOR_ANGLE_LEEWAY))
-            {
-                currState_ = HopperState::DOOR_OPEN;
-            }
-            else if (currAngle_ >= (pCalibration_->angleClosed - DOOR_ANGLE_LEEWAY))
-            {
-                currState_ = HopperState::DOOR_CLOSED;
-            }
-            else
-            {
-                currState_ = HopperState::DOOR_AJAR;
-            }
-       }
+            currState_ = DOOR_UNCALIBRATED;
+            return;
+        }
+
+        findAngle();
+        float diffOpen = abs(currAngle_ - pCalibration_->angleOpen);
+        float diffClosed = abs(currAngle_ - pCalibration_->angleClosed);
+
+        if ((diffOpen > DOOR_ANGLE_LEEWAY) && (diffClosed > DOOR_ANGLE_LEEWAY))
+        {
+            currState_ = DOOR_AJAR;
+        }
+        else if (diffClosed < diffOpen)
+        {
+            currState_ = DOOR_CLOSED;
+        }
+        else
+        {
+            currState_ = DOOR_OPEN;
+        }
     }
 
     void DoorController::update()
     {
-        if (isPowered_ &&
-            (pServoEn_ != nullptr) &&
-            powerTimer_.isEnabled() &&
-            powerTimer_.hasPeriodPassed())
-        {
-            pServoEn_->set(Level::L_HIGH);
-            isPowered_ = false;
-        }
-
         if (updateTimer_.hasPeriodPassed())
         {
             if (isRunning_)
             {
+                // Movement time out
                 if (timeoutTimer_.hasOneShotPassed())
                 {
-                    // Disable servo here
+                    // Disable servo to allow for position to be read
                     pServo_->disable();
-                    isRunning_ = false;
 
                     // Allow for the reading to settle
                     DELAY(100);
@@ -344,124 +222,103 @@ namespace Hopper
 
 #ifdef DEBUG
                     PRINTLN("A: %f", currAngle_);
-                    // PRINTLN("State: %d", currState_);
+                    PRINTLN("State: %d", currState_);
 #endif
-
-                    if (currState_ == HopperState::DOOR_AJAR)
-                    {
-                        hasCommandFailed_ = true;
-#ifdef DEBUG
-                        // PRINTLN("Movement FAILED!");
-#endif
-                        // if (!isReturning_)
-                        // {
-                        //     if (targetState_ == HopperState::DOOR_CLOSED)
-                        //     {
-                        //         open(Commander::INTERNAL);
-                        //     }
-                        //     else if (targetState_ == HopperState::DOOR_OPEN)
-                        //     {
-                        //         close(Commander::INTERNAL);
-                        //     }
-                        //     isReturning_ = true;
-                        // }
-                        // else
-                        {
-                            isReturning_ = false;
-
-                            // Failed to move door
-                            handleMovementComplete();
-                        }
-                    }
-                    else if (currState_ == HopperState::DOOR_INVALID)
-                    {
-#ifdef DEBUG
-                        PRINTLN("INVALID STATE!");
-                        PRINTLN("Resetting....");  
-#endif
-                        hasCommandFailed_ = true;
-                        handleMovementComplete();
-                        DELAY(5000);
-                        
-                        // reset
-                        while(true){}
-                    }
-                    else
-                    {
-                        handleMovementComplete();
-                        isReturning_ = false;
-                    }
+                    handleCommandComplete(true);
                 }
-                else// if (accelTimer_.hasPeriodPassed())
+                else
                 {
-                    uint16_t servoAngle = pServo_->getAngle();
-                    uint16_t nextAngle = servoAngle;
-                    uint16_t targetAngle = servoAngle;
+                    // Continue movement
+                    int16_t servoAngle = pServo_->getAngle();
+                    int16_t nextAngle = servoAngle;
 
-                    if (targetState_ == HopperState::DOOR_CLOSED)
+                    if (targetAngle_ < servoAngle)
                     {
-                        targetAngle = pCalibration_->angleClosed;
+                        nextAngle = ((servoAngle - targetAngle_) >= speed_) ?
+                                    servoAngle - speed_ :
+                                    targetAngle_;
                     }
-                    else if (targetState_ == HopperState::DOOR_OPEN)
+                    else if (targetAngle_ > servoAngle)
                     {
-                        targetAngle = pCalibration_->angleOpen;
+                        nextAngle = ((targetAngle_ - servoAngle) >= speed_) ?
+                                    servoAngle + speed_ :
+                                    targetAngle_;  
                     }
-
-                    if (targetAngle < servoAngle)
-                    {
-                        nextAngle = ((servoAngle - targetAngle) >= angularVelocity_) ?
-                                    servoAngle - angularVelocity_ :
-                                    targetAngle;
-
-                        pServo_->setAngle(nextAngle);
-                    }
-                    else if (targetAngle > servoAngle)
-                    {
-                        nextAngle = ((targetAngle - servoAngle) >= angularVelocity_) ?
-                                    servoAngle + angularVelocity_ :
-                                    targetAngle;
-
-                        pServo_->setAngle(nextAngle);
-                    }
+                    pServo_->setAngle(nextAngle);
                 }
             }
         }
     }
 
-    void DoorController::handleMovementComplete()
+    void DoorController::handleCommandComplete(bool success)
     {
-        bool success = !hasCommandFailed_ && (currState_ == targetState_);
-        if (currCommander_ == Commander::REMOTE)
+        if (commander_ == Commander::REMOTE)
         {
             const char* resStr = success ? PASS_STR : FAIL_STR;
-            char* statusStr = "3\0";
-            statusStr[0] = getState() + 0x30;
+            char statusStr[2] =
+            {
+                currState_ + 0x30,
+                '\0'
+            };
             pWifiCli->sendWifiCommand(resStr, statusStr);
         }
+
+        isRunning_ = false;
+        timeoutTimer_.disable();
     }
 
-    int16_t DoorController::readPos()
+    bool DoorController::storeCalMinAdc()
     {
-        uint32_t sum = 0;
-        uint8_t readingCount = 0;
-        bool success;
-        uint16_t reading;
-        for (uint8_t i=0; i<NUM_POS_SAMPLES; i++)
+        int16_t adcMin = readPosition();
+        if (adcMin < 0)
         {
-            reading = pFeedback_->read(&success);
-            if (success)
-            {
-                sum += reading;
-                readingCount++;
-            }
+            PRINTLN("Could not read min ADC");
+            return false;
         }
+        pCalibration_->adcMin = (uint16_t)adcMin;
+        PRINTLN("ADC min: %d", pCalibration_->adcMin);
+        return true;
+    }
 
-        if (readingCount == 0)
+    bool DoorController::storeCalMaxAdc()
+    {
+        int16_t adcMax = readPosition();
+        if (adcMax < 0)
         {
-            return -1;
+            PRINTLN("Could not read max ADC");
+            return false;
         }
+        pCalibration_->adcMax = (uint16_t)adcMax;
+        PRINTLN("ADC max: %d", pCalibration_->adcMax);
+        return true;
+    }
 
-        return sum/readingCount;
+    bool DoorController::storeCalAngleOpen()
+    {
+        int16_t adcOpen = readPosition();
+        if (adcOpen < 0)
+        {
+            PRINTLN("Could not read open ADC");
+            return false;
+        }
+        PRINTLN("ADC Open: %d", adcOpen);
+        pCalibration_->angleOpen = static_cast<int16_t>(adcToAngle(pCalibration_->adcMin, pCalibration_->adcMax, (uint16_t)adcOpen));
+        PRINTLN("Angle Open: %d", pCalibration_->angleOpen);
+        return true;
+    }
+
+    bool DoorController::storeCalAngleClosed()
+    {
+        int16_t adcClosed = readPosition();
+        if (adcClosed < 0)
+        {
+            PRINTLN("Could not read closed ADC");
+            return false;
+        }
+        PRINTLN("ADC Closed: %d", adcClosed);
+        pCalibration_->angleClosed = static_cast<int16_t>(adcToAngle(pCalibration_->adcMin, pCalibration_->adcMax, (uint16_t)adcClosed));
+        PRINTLN("Angle Closed: %d", pCalibration_->angleClosed);
+        return true;
     }
 
     void DoorController::test()

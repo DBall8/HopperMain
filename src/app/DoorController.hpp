@@ -14,7 +14,8 @@ namespace Hopper
 {
     enum HopperState : uint8_t
     {
-        DOOR_OPEN = 0,
+        DOOR_UNCALIBRATED = 0,
+        DOOR_OPEN,
         DOOR_CLOSED,
         DOOR_AJAR,
 
@@ -43,19 +44,23 @@ namespace Hopper
         public:
             DoorController(Servo::IServo* pServo,
                            Adc::IAdc* pFeedback,
-                           Tic::TicCounter* pTicHandler,
-                           uint8_t angularVelocity,
-                           Dio::IDio* pServoEn = nullptr);
+                           Tic::TicCounter* pTicHandler);
             ~DoorController(){}
 
             void init();
+            void command(Commander commander, float targetAngle, bool requireCal = true);
             void open(Commander commander);
             void close(Commander commander);
             void toggle();
             HopperState getState();
-            void runCalibration(SerialComm::ISerial* pSerial, Watchdog::IWatchdog* pWdt);
-            void setCalibration(HopperCalibration* pCalibration){ pCalibration_ = pCalibration; }
 
+            bool storeCalMinAdc();
+            bool storeCalMaxAdc();
+            bool storeCalAngleOpen();
+            bool storeCalAngleClosed();
+            bool setCalibration(HopperCalibration* pCalibration){ pCalibration_ = pCalibration; }
+
+            bool isCommandInProgress(){ return isRunning_; }
             void update();
 
             void test();
@@ -63,32 +68,26 @@ namespace Hopper
         private:
             Servo::IServo* pServo_;
             Adc::IAdc* pFeedback_;
-            uint8_t angularVelocity_;
-            Dio::IDio* pServoEn_;
             Timer::SoftwareTimer timeoutTimer_;
-            Timer::SoftwareTimer powerTimer_;
             Timer::SoftwareTimer updateTimer_;
             HopperCalibration* pCalibration_;
+            Filter::LowPassFilter angleFilter_;
 
             HopperState currState_;
-            HopperState targetState_;
-            Commander currCommander_;
-            Filter::LowPassFilter angleFilter_;
             float currAngle_;
-            bool isRunning_;
-            bool isPowered_;
-            bool isReturning_;
-            bool hasCommandFailed_;
 
-            float getAngle();
+            bool isRunning_;
+            float targetAngle_;
+            float speed_;
+            Commander commander_;
+
+            float adcToAngle(uint16_t adcAtMin, uint16_t adcAtMax, uint16_t adcAngle);
+            int16_t readPosition();
+            float findAngle();
             void findState();
             bool isCalibrated();
 
-            void powerServo();
-
-            void handleMovementComplete();
-
-            int16_t readPos();
+            void handleCommandComplete(bool success);
     };
 }
 

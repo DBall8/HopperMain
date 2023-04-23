@@ -20,8 +20,12 @@ const static char SPACE = ' ';
 static void statusCmd(uint16_t argc, ArgV argv)
 {
     // Convert numerical status to a ascii character
-    char* statusStr = "3\0";
-    statusStr[0] = pDoor->getState() + 0x30;
+    char statusStr[2] =
+    {
+        pDoor->getState() + 0x30,
+        '\0'
+    };
+    
     pWifiCli->sendWifiCommand(statusStr);
 }
 

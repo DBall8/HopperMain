@@ -4,6 +4,7 @@
 #include "utilities/print/Print.hpp"
 #include "hopper_shared.hpp"
 #include "WifiCli.hpp"
+#include "utilities/strings/Strings.hpp"
 #include <string.h>
 
 #include "Storage.hpp"
@@ -12,8 +13,7 @@ using namespace Cli;
 using namespace SerialComm;
 using namespace Dio;
 using namespace Hopper;
-
-extern ISerial* pUart;
+using namespace Strings;
 
 const static uint8_t MAX_RESP_LEN = 12;
 static char respBuffer[MAX_RESP_LEN + 1] = {0};
@@ -35,10 +35,10 @@ static void closeCmd(uint16_t argc, ArgV argv)
     pDoor->close(Commander::LOCAL);
 }
 
-static void calibrationCmd(uint16_t argc, ArgV argv)
-{
-    pDoor->runCalibration(pUart, pWdt);
-}
+// static void calibrationCmd(uint16_t argc, ArgV argv)
+// {
+//     pDoor->runCalibration(pUart, pWdt);
+// }
 
 static void echoCmd(uint16_t argc, ArgV argv)
 {
@@ -102,16 +102,33 @@ static void wifiStatusCmd(uint16_t argc, ArgV argv)
     pWifiCli->sendWifiCommand(MAIN_STATUS_CMD_STR);
 }
 
+static void angleCmd(uint16_t argc, ArgV argv)
+{
+    int32_t angle = str2int(argv[1]);
+    PRINTLN("Set to %d\n", angle);
+    pDoor->command(Commander::LOCAL, angle);
+}
+
+static void getCmd(uint16_t argc, ArgV argv)
+{
+    pWifiCli->sendWifiCommand(GET_CMD_STR);
+    memset(respBuffer, 0, sizeof(respBuffer));
+    uint8_t respLen = pWifiSerial->readLine((uint8_t*)respBuffer, MAX_RESP_LEN, RESP_TIMEOUT_MS);
+    PRINTLN("%s", respBuffer);
+}
+
 const static Command commands[] =
 {
     {.name = "STATUS", .function = &statusCmd},
     {.name = "OPEN", .function = &openCmd},
     {.name = "CLOSE", .function = &closeCmd},
-    {.name = "CAL", .function = &calibrationCmd},
+    //{.name = "CAL", .function = &calibrationCmd},
     {.name = ECHO_CMD_STR, .function = &echoCmd},
     {.name = ID_CMD_STR, .function = &idCmd},
     {.name = WIFI_CMD_STR, .function = &wifiCmd},
     {.name = "WS", .function = &wifiStatusCmd},
+    {.name = "A", .function = &angleCmd},
+    {.name = GET_CMD_STR, .function = &getCmd},
 };
 const static uint8_t NUM_COMMANDS = sizeof(commands) / sizeof(commands[0]);
 

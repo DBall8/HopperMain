@@ -7,13 +7,13 @@
 #include "drivers/button/IButton.hpp"
 #include "drivers/eeprom/EepromManager.hpp"
 #include "app/DoorController.hpp"
-
 #include "drivers/serial/ISerial.hpp"
-extern SerialComm::ISerial* pWifiSerial;
 
 extern Watchdog::IWatchdog* pWdt;
 extern Tic::TicCounter* pTicHandler;
 extern Dio::IDio* pLed;
+extern SerialComm::ISerial* pWifiSerial;
+extern SerialComm::ISerial* pUart;
 extern Button::IButton* pToggleButton;
 extern Eeprom::EepromManager* pStorage;
 extern Hopper::DoorController* pDoor;
