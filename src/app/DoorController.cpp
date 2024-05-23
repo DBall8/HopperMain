@@ -37,6 +37,7 @@ namespace Hopper
         pFeedback_(pFeedback),
         timeoutTimer_(pTicHandler->secondsToTics(DOOR_TIMEOUT_S), pTicHandler),
         updateTimer_(SERVO_FEEDBACK_UPDATE_TICS, pTicHandler),
+        calibrationTimer_(pTicHandler->secondsToTics(CALIBRATION_TIMEOUT_S), pTicHandler),
         angleFilter_(10, 0)
     {
         currAngle_ = 0;
@@ -50,7 +51,7 @@ namespace Hopper
 
     bool DoorController::isCalibrated()
     {
-        return pCalibration_->adcMax != pCalibration_->adcMin;
+        return currCalibrationStep_ == CalibrationStep::SUCCESS;
     }
 
     void DoorController::init()
@@ -95,7 +96,7 @@ namespace Hopper
     {
         if (!isCalibrated())
         {
-            PRINTLN("NOT CALIBRATED");
+            PRINTLN("!UNCAL!");
             handleCommandComplete(false);
             return;
         }
@@ -107,7 +108,7 @@ namespace Hopper
     {
         if (!isCalibrated())
         {
-            PRINTLN("NOT CALIBRATED");
+            PRINTLN("!UNCAL!");
             handleCommandComplete(false);
             return;
         }
@@ -119,7 +120,7 @@ namespace Hopper
     {
         if (!isCalibrated())
         {
-            PRINTLN("NOT CALIBRATED");
+            PRINTLN("!UNCAL!");
             handleCommandComplete(false);
             return;
         }
@@ -206,6 +207,8 @@ namespace Hopper
 
     void DoorController::update()
     {
+        calibrationUpdate();
+
         if (updateTimer_.hasPeriodPassed())
         {
             if (isRunning_)
@@ -257,10 +260,17 @@ namespace Hopper
             const char* resStr = success ? PASS_STR : FAIL_STR;
             char statusStr[2] =
             {
-                currState_ + 0x30,
+                (char)(currState_ + 0x30),
                 '\0'
             };
             pWifiCli->sendWifiCommand(resStr, statusStr);
+        }
+
+        if (currState_ != HopperState::DOOR_OPEN &&
+            currState_ != HopperState::DOOR_CLOSED)
+        {
+            pWifiCli->logBackend("STATE", currState_);
+            pWifiCli->logBackend("ANGLE", currAngle_);
         }
 
         isRunning_ = false;
@@ -293,32 +303,147 @@ namespace Hopper
         return true;
     }
 
-    bool DoorController::storeCalAngleOpen()
+    void DoorController::startCalibration()
     {
+        currCalibrationStep_ = CalibrationStep::START;
+    }
+
+    void DoorController::storeCalAngleOpen()
+    {
+        if (currCalibrationStep_ != CalibrationStep::WAIT_FOR_OPEN)
+        {
+            currCalibrationStep_ = CalibrationStep::FAIL;
+            return;
+        }
+
         int16_t adcOpen = readPosition();
         if (adcOpen < 0)
         {
             PRINTLN("Could not read open ADC");
-            return false;
+            currCalibrationStep_ = CalibrationStep::FAIL;
+            return;
         }
         PRINTLN("ADC Open: %d", adcOpen);
         pCalibration_->angleOpen = static_cast<int16_t>(adcToAngle(pCalibration_->adcMin, pCalibration_->adcMax, (uint16_t)adcOpen));
         PRINTLN("Angle Open: %d", pCalibration_->angleOpen);
-        return true;
+
+        currCalibrationStep_ = CalibrationStep::SUCCESS;
+
+        pWifiCli->logBackend("CAL_O", pCalibration_->angleOpen);
     }
 
-    bool DoorController::storeCalAngleClosed()
+    void DoorController::storeCalAngleClosed()
     {
+        if (currCalibrationStep_ != CalibrationStep::WAIT_FOR_CLOSE)
+        {
+            currCalibrationStep_ = CalibrationStep::FAIL;
+            return;
+        }
+
         int16_t adcClosed = readPosition();
         if (adcClosed < 0)
         {
             PRINTLN("Could not read closed ADC");
-            return false;
+            currCalibrationStep_ = CalibrationStep::FAIL;
+            return;
         }
         PRINTLN("ADC Closed: %d", adcClosed);
         pCalibration_->angleClosed = static_cast<int16_t>(adcToAngle(pCalibration_->adcMin, pCalibration_->adcMax, (uint16_t)adcClosed));
         PRINTLN("Angle Closed: %d", pCalibration_->angleClosed);
+
+        currCalibrationStep_ = CalibrationStep::WAIT_FOR_OPEN;
+
+        pWifiCli->logBackend("CAL_C", pCalibration_->angleClosed);
+    }
+
+    bool DoorController::setCalibration(HopperCalibration* pCalibration)
+    {
+        pCalibration_ = pCalibration;
+        if (pCalibration_->adcMax != pCalibration_->adcMin)
+        {
+            currCalibrationStep_ = CalibrationStep::SUCCESS;
+        }
         return true;
+    } 
+
+    void DoorController::calibrationUpdate()
+    {
+        // Handle timeout timer
+        if ((currCalibrationStep_ != CalibrationStep::SUCCESS) &&
+            (currCalibrationStep_ != CalibrationStep::FAIL))
+        {
+            if (!calibrationTimer_.isEnabled())
+            {
+                calibrationTimer_.enable();
+            }
+
+            if (calibrationTimer_.hasOneShotPassed())
+            {
+                currCalibrationStep_ = CalibrationStep::FAIL;
+                return;
+            }
+        }
+
+        // Handle current state
+        switch (currCalibrationStep_)
+        {
+            case CalibrationStep::START:
+                DEBUG_PRINTLN("Calibrating");
+
+                // Find the ADC reading at the minimum angle
+                command(Commander::LOCAL, MIN_SERVO_ANGLE);
+                currCalibrationStep_ = CalibrationStep::WAIT_FOR_MIN;
+                break;
+
+            case CalibrationStep::WAIT_FOR_MIN:
+                if (isCommandInProgress())
+                {
+                    break;
+                }
+
+                // Store the minimum position value
+                if (!storeCalMinAdc())
+                {
+                    currCalibrationStep_ = CalibrationStep::FAIL;
+                    break;
+                }
+
+                // Find the ADC at the max angle
+                command(Commander::LOCAL, MAX_SERVO_ANGLE);
+                currCalibrationStep_ = CalibrationStep::WAIT_FOR_MAX;
+                break;
+
+            case CalibrationStep::WAIT_FOR_MAX:
+                if (isCommandInProgress())
+                {
+                    break;
+                }
+
+                // Store maximum position value
+                if (!storeCalMaxAdc())
+                {
+                    currCalibrationStep_ = CalibrationStep::FAIL;
+                    break;
+                }
+
+                currCalibrationStep_ = CalibrationStep::WAIT_FOR_CLOSE;
+                break;
+
+            case CalibrationStep::WAIT_FOR_CLOSE:
+            case CalibrationStep::WAIT_FOR_OPEN:
+                // Do nothing, waiting for message to tell us when to store values
+                break;
+
+            case CalibrationStep::SUCCESS:
+            case CalibrationStep::FAIL:
+                // Finished calibrating, sit in final state
+                break;
+
+            default:
+                // Should never get here
+                currCalibrationStep_ = CalibrationStep::FAIL;
+                break;
+        }
     }
 
     void DoorController::test()

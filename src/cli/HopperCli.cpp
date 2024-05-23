@@ -13,7 +13,7 @@ using namespace Cli;
 using namespace SerialComm;
 using namespace Dio;
 using namespace Hopper;
-using namespace Strings;
+using namespace StringUtilities;
 
 const static uint8_t MAX_RESP_LEN = 12;
 static char respBuffer[MAX_RESP_LEN + 1] = {0};
@@ -22,7 +22,6 @@ const static uint16_t RESP_TIMEOUT_MS = 60000;
 static void statusCmd(uint16_t argc, ArgV argv)
 {
     PRINTLN("Hopper is %d", pDoor->getState());
-    pDoor->test();
 }
 
 static void openCmd(uint16_t argc, ArgV argv)
@@ -77,7 +76,7 @@ static void wifiCmd(uint16_t argc, ArgV argv)
     }
     else if (argc == 3)
     {
-        pWifiCli->sendWifiCommand(WIFI_CMD_STR, (char**)&(argv[1]), 2);
+        pWifiCli->sendWifiCommand(WIFI_CMD_STR, (const char**)&(argv[1]), 2);
     }
     else
     {
@@ -113,7 +112,7 @@ static void getCmd(uint16_t argc, ArgV argv)
 {
     pWifiCli->sendWifiCommand(GET_CMD_STR);
     memset(respBuffer, 0, sizeof(respBuffer));
-    uint8_t respLen = pWifiSerial->readLine((uint8_t*)respBuffer, MAX_RESP_LEN, RESP_TIMEOUT_MS);
+    pWifiSerial->readLine((uint8_t*)respBuffer, MAX_RESP_LEN, RESP_TIMEOUT_MS);
     PRINTLN("%s", respBuffer);
 }
 

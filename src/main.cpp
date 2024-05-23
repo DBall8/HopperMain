@@ -16,8 +16,8 @@ extern "C" void __cxa_pure_virtual() { while (1); }
 
 void setup();
 void loop();
+void updateButton();
 void updateLed();
-void runCalibration();
 
 static SoftwareTimer ticTimer(1, pTicHandler, pWdt);
 static SoftwareTimer flashTimer(1, pTicHandler);
@@ -49,12 +49,12 @@ void setup()
     flashTimer.setPeriod(pTicHandler->secondsToTics(1));
     flashTimer.enable();
 
-    PRINTLN("----------");
-    PRINTLN("Hopper started.");
+    // PRINTLN("----------");
+    PRINTLN("\r\n!Hopper started!\r\n");
 #ifdef PROG_WIFI
-    PRINTLN("WIFI SERIAL DISABLED");
+    PRINTLN("WIFI DIS");
 #endif
-    PRINTLN("----------");
+    // PRINTLN("----------");
 
     // In case we rebooted but the wifi board did not, get the current wifi status
     pWifiCli->sendWifiCommand(MAIN_STATUS_CMD_STR);
@@ -66,6 +66,22 @@ void loop()
 {
     pWdt->reset();
 
+#ifndef PROG_WIFI
+    updateButton();
+    updateLed();
+#endif
+
+    pDoor->update();
+    pCli->update();
+    pWifiCli->update();
+    pStorage->update();
+
+    // Check for any driver errors
+    checkErrors();
+}
+
+void updateButton()
+{
     pToggleButton->update();
     if (pToggleButton->getTransition() == ButtonTransition::PRESSED)
     {
@@ -76,7 +92,7 @@ void loop()
         if (buttonHoldTimer.hasOneShotPassed() & !buttonHeld)
         {
             buttonHeld = true;
-            runCalibration();
+            pWifiCli->sendWifiCommand(SETUP_CMD_STR);
         }
     }
     else if (pToggleButton->getTransition() == ButtonTransition::RELEASED)
@@ -91,13 +107,6 @@ void loop()
         buttonHoldTimer.disable();
         buttonHeld = false;
     }
-
-    updateLed();
-
-    pDoor->update();
-    pCli->update();
-    pWifiCli->update();
-    pStorage->update();
 }
 
 void updateLed()
@@ -125,56 +134,4 @@ void updateLed()
         pLed->toggle();
         flashTimer.enable();
     }
-}
-
-void waitForButtonTransition(ButtonTransition transition)
-{
-    pToggleButton->update();
-    while(pToggleButton->getTransition() != transition)
-    {
-        pWdt->reset();
-        DELAY(100);
-        pToggleButton->update();
-    }
-}
-
-void runCalibration()
-{
-    PRINTLN("Running calibration....");
-    resetLed = true;
-    pLed->set(Level::L_LOW);
-
-    // Find the ADC reading at the minimum angle
-    pDoor->command(Commander::LOCAL, MIN_SERVO_ANGLE);
-    while (pDoor->isCommandInProgress())
-    {
-        pDoor->update();
-        pWdt->reset();
-    }
-    if (!pDoor->storeCalMinAdc()) return;
-
-    // Find the ADC at the max angle
-    pDoor->command(Commander::LOCAL, MAX_SERVO_ANGLE);
-    while (pDoor->isCommandInProgress())
-    {
-        pDoor->update();
-        pWdt->reset();
-    }
-    if (!pDoor->storeCalMaxAdc()) return;
-
-    // Find the desired closed angle
-    PRINTLN("Please close then press the button");
-    pLed->set(Level::L_HIGH);
-    waitForButtonTransition(ButtonTransition::PRESSED);
-    pLed->set(Level::L_LOW);
-    if (!pDoor->storeCalAngleClosed()) return;
-
-    // Find the desired open angle
-    PRINTLN("Please open then press the button");
-    pLed->set(Level::L_HIGH);
-    waitForButtonTransition(ButtonTransition::PRESSED);
-    pLed->set(Level::L_LOW);
-    if (!pDoor->storeCalAngleOpen()) return;
-
-    PRINTLN("Complete!");
 }

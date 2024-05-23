@@ -19,6 +19,7 @@ extern Eeprom::EepromManager* pStorage;
 extern Hopper::DoorController* pDoor;
 
 void initDevices();
+void checkErrors();
 
 void debugTest();
 

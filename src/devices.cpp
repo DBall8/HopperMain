@@ -17,6 +17,7 @@
 #include "utilities/print/Print.hpp"
 
 #include "Storage.hpp"
+#include "cli/WifiCli.hpp"
 
 using namespace Watchdog;
 using namespace Timer;
@@ -53,7 +54,7 @@ static Atmega328Timer ticTmr(Timer::TIMER_2, CTC, PRESCALE, TOP, &HandleTicInter
 
 
 // Construct main debug serial port
-const static uint8_t RX_BUFF_SIZE = 32;
+const static uint8_t RX_BUFF_SIZE = 16;
 const static uint8_t TX_BUFF_SIZE = 64;
 static uint8_t rxBuffer[RX_BUFF_SIZE];
 static uint8_t txBuffer[TX_BUFF_SIZE];
@@ -108,7 +109,7 @@ static Atmega328Eeprom eeprom(&intControl);
 static EepromManager eepromManager(&eeprom, pStorageItems, sizeof(StorageItems));
 EepromManager* pStorage = &eepromManager;
 
-const static uint16_t WIFI_SERIAL_RX_BUFFER_LEN = 32;
+const static uint16_t WIFI_SERIAL_RX_BUFFER_LEN = 64;
 static uint8_t wifiSerialRxBuffer[WIFI_SERIAL_RX_BUFFER_LEN];
 static SoftwareTimer wifiSerialTimeoutTimer(0, pTicHandler, pWdt);
 static Atmega328SoftwareSerial wifiSerial(&wifiRx, &wifiTx, &intControl, 9600, F_CPU, wifiSerialRxBuffer, WIFI_SERIAL_RX_BUFFER_LEN, &wifiSerialTimeoutTimer);
@@ -141,11 +142,15 @@ void initDevices()
 
     // Check for a reset cause
     ResetCause resetCause = pWdt->getResetCause();
-    if (resetCause != ResetCause::POWER_ON)
+    if (resetCause == ResetCause::WATCHDOG)
     {
-        PRINTLN("Reset due to %s", (resetCause == ResetCause::WATCHDOG) ?
-                                    "watchdog" :
-                                    "brown-out");
+        PRINTLN("!WDT!");
+        pWifiCli->logBackend("WDT_RESET");
+    }
+    else if (resetCause == ResetCause::BROWN_OUT)
+    {
+        PRINTLN("!BO!");
+        pWifiCli->logBackend("WDT_BROWN_OUT");
     }
 
     pStorage->initialize();
@@ -163,8 +168,15 @@ void initDevices()
     pDoor->setCalibration(&pStorageItems->calibration);
 }
 
+void checkErrors()
+{
+    if (wifiSerial.checkRxOverflow())
+    {
+        PRINTLN("!RX OVF!");
+    }
+}
+
 void debugTest()
 {
-    wifiTx.set(L_HIGH);
-    DELAY(1000);
+
 }

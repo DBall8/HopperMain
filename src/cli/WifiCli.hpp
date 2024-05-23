@@ -17,6 +17,9 @@ class WifiCli : public Cli::CommandInterface
         void sendWifiCommand(const char* cmd, const char* value);
         void sendWifiCommand(const char* cmd, const char** values, uint8_t numVals);
 
+        void logBackend(const char* log);
+        void logBackend(const char* log, uint16_t value);
+
     private:
         bool initialized_ = false;
 };

@@ -31,6 +31,18 @@ namespace Hopper
         NUM_COMMANDERS
     };
 
+    enum class CalibrationStep : uint8_t
+    {
+        UNDEFINED = 0,
+        START,
+        WAIT_FOR_MIN,
+        WAIT_FOR_MAX,
+        WAIT_FOR_CLOSE,
+        WAIT_FOR_OPEN,
+        SUCCESS,
+        FAIL
+    };
+
     struct HopperCalibration
     {
         uint16_t adcMin;
@@ -54,11 +66,11 @@ namespace Hopper
             void toggle();
             HopperState getState();
 
-            bool storeCalMinAdc();
-            bool storeCalMaxAdc();
-            bool storeCalAngleOpen();
-            bool storeCalAngleClosed();
-            bool setCalibration(HopperCalibration* pCalibration){ pCalibration_ = pCalibration; }
+            CalibrationStep getCalibrationStep(){ return currCalibrationStep_; }
+            void startCalibration();
+            void storeCalAngleOpen();
+            void storeCalAngleClosed();
+            bool setCalibration(HopperCalibration* pCalibration);
 
             bool isCommandInProgress(){ return isRunning_; }
             void update();
@@ -70,10 +82,12 @@ namespace Hopper
             Adc::IAdc* pFeedback_;
             Timer::SoftwareTimer timeoutTimer_;
             Timer::SoftwareTimer updateTimer_;
+            Timer::SoftwareTimer calibrationTimer_;
             HopperCalibration* pCalibration_;
             Filter::LowPassFilter angleFilter_;
 
             HopperState currState_;
+            CalibrationStep currCalibrationStep_;
             float currAngle_;
 
             bool isRunning_;
@@ -86,6 +100,10 @@ namespace Hopper
             float findAngle();
             void findState();
             bool isCalibrated();
+
+            void calibrationUpdate();
+            bool storeCalMinAdc();
+            bool storeCalMaxAdc();
 
             void handleCommandComplete(bool success);
     };
