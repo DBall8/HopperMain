@@ -56,6 +56,7 @@ static void calibrateCmd(uint16_t argc, ArgV argv)
     if (strcompare(argv[1], CAL_START_STR))
     {
         pDoor->startCalibration();
+
         while ((pDoor->getCalibrationStep() != CalibrationStep::WAIT_FOR_CLOSE) &&
                (pDoor->getCalibrationStep() != CalibrationStep::FAIL))
         {

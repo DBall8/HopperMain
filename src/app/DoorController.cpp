@@ -306,6 +306,7 @@ namespace Hopper
     void DoorController::startCalibration()
     {
         currCalibrationStep_ = CalibrationStep::START;
+        calibrationTimer_.enable();
     }
 
     void DoorController::storeCalAngleOpen()
@@ -372,14 +373,10 @@ namespace Hopper
         if ((currCalibrationStep_ != CalibrationStep::SUCCESS) &&
             (currCalibrationStep_ != CalibrationStep::FAIL))
         {
-            if (!calibrationTimer_.isEnabled())
-            {
-                calibrationTimer_.enable();
-            }
-
             if (calibrationTimer_.hasOneShotPassed())
             {
                 currCalibrationStep_ = CalibrationStep::FAIL;
+                calibrationTimer_.disable();
                 return;
             }
         }
