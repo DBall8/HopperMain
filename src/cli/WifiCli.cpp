@@ -98,6 +98,11 @@ static void calibrateCmd(uint16_t argc, ArgV argv)
     return;
 }
 
+static void wiggleCmd(uint16_t argc, ArgV argv)
+{
+    pDoor->wiggle(Commander::REMOTE);
+}
+
 static void connectedCmd(uint16_t argc, ArgV argv)
 {
     isWifiConn = true;
@@ -108,6 +113,23 @@ static void disconnectedCmd(uint16_t argc, ArgV argv)
 {
     isWifiConn = false;
     PRINTLN("Disconnected");
+}
+
+static void setupCmd(uint16_t argc, ArgV argv)
+{
+    if (argc != 2)
+    {
+        return;
+    }
+
+    if (argv[1][0] == 't')
+    {
+        setSetupMode(true);
+    }
+    else if (argv[1][0] == 'f')
+    {
+        setSetupMode(false);
+    }
 }
 
 static void logCmd(uint16_t argc, ArgV argv)
@@ -130,8 +152,10 @@ const static Command commands[] =
     {.name = OPEN_CMD,          .function = &openCmd},
     {.name = CLOSE_CMD,         .function = &closeCmd},
     {.name = CALIBRATE_CMD,     .function = &calibrateCmd},
+    {.name = WIGGLE_CMD,        .function = &wiggleCmd},
     {.name = CONNECTED_STR,     .function = &connectedCmd},
     {.name = DISCONNECTED_STR,  .function = &disconnectedCmd},
+    {.name = SETUP_CMD,         .function = &setupCmd},
     {.name = LOG_CMD,           .function = &logCmd},
 };
 const static uint8_t NUM_COMMANDS = sizeof(commands) / sizeof(commands[0]);

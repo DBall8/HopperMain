@@ -12,6 +12,8 @@ const static char OPEN_CMD[]            = "<OPEN";
 const static char CLOSE_CMD[]           = "<CLOSE";
 const static char CALIBRATE_CMD[]       = "<CAL";
 const static char LOG_CMD[]             = "<L";
+const static char SETUP_CMD[]           = "<I";
+const static char WIGGLE_CMD[]          = "<WIG";
 
 // Main to Wifi commands
 const static char ECHO_CMD_STR[]        = "ECHO";

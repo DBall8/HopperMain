@@ -10,9 +10,16 @@ using namespace Servo;
 using namespace Adc;
 using namespace Dio;
 
+#define UNCAL_STR "!UC!"
+
 namespace Hopper
 {
     const static uint16_t CAL_DELAY_MS = 500;
+
+    const static uint16_t WIGGLE_ANGLE = 20;
+    const static uint16_t WIGGLE_STEP_TIME_MS = 100;
+    const static uint16_t WIGGLE_TOTAL_TIME_MS = 3000;
+    const static uint16_t WIGGLE_FINISH_TIME_MS = 500;
 
     float DoorController::adcToAngle(
         uint16_t adcAtMin,
@@ -38,6 +45,7 @@ namespace Hopper
         timeoutTimer_(pTicHandler->secondsToTics(DOOR_TIMEOUT_S), pTicHandler),
         updateTimer_(SERVO_FEEDBACK_UPDATE_TICS, pTicHandler),
         calibrationTimer_(pTicHandler->secondsToTics(CALIBRATION_TIMEOUT_S), pTicHandler),
+        wiggleTimer_(pTicHandler->msecondsToTics(WIGGLE_TOTAL_TIME_MS), pTicHandler),
         angleFilter_(10, 0)
     {
         currAngle_ = 0;
@@ -96,7 +104,7 @@ namespace Hopper
     {
         if (!isCalibrated())
         {
-            PRINTLN("!UNCAL!");
+            PRINTLN(UNCAL_STR);
             handleCommandComplete(false);
             return;
         }
@@ -108,7 +116,7 @@ namespace Hopper
     {
         if (!isCalibrated())
         {
-            PRINTLN("!UNCAL!");
+            PRINTLN(UNCAL_STR);
             handleCommandComplete(false);
             return;
         }
@@ -120,7 +128,7 @@ namespace Hopper
     {
         if (!isCalibrated())
         {
-            PRINTLN("!UNCAL!");
+            PRINTLN(UNCAL_STR);
             handleCommandComplete(false);
             return;
         }
@@ -141,6 +149,51 @@ namespace Hopper
         if (isRunning_) return HopperState::DOOR_AJAR;
         findState();
         return currState_;
+    }
+
+    bool DoorController::wiggleCustom(uint16_t angle, uint16_t stepMs)
+    {
+        if (!isCalibrated())
+        {
+            return false;
+        }
+
+        float angleA = findAngle();
+        float angleB = angleA;
+        if (angleA < ((MAX_SERVO_ANGLE + MIN_SERVO_ANGLE) / 2))
+        {
+            angleB += angle;
+        }
+        else
+        {
+            angleB -= angle;
+        }
+
+        pServo_->setAngle(angleA);
+        pServo_->enable();
+
+        wiggleTimer_.enable();
+        while (!wiggleTimer_.hasOneShotPassed())
+        {
+            DELAY(stepMs);
+            pServo_->setAngle(angleB);
+            DELAY(stepMs);
+            pServo_->setAngle(angleA);
+        }
+        DELAY(WIGGLE_FINISH_TIME_MS);
+        wiggleTimer_.disable();
+        pServo_->disable();
+
+        return true;
+    }
+
+    void DoorController::wiggle(Commander commander)
+    {
+        bool success = wiggleCustom(WIGGLE_ANGLE, WIGGLE_STEP_TIME_MS);
+        if (commander == Commander::REMOTE)
+        {
+            handleCommandComplete(success);
+        }
     }
 
     int16_t DoorController::readPosition()
@@ -282,11 +335,15 @@ namespace Hopper
         int16_t adcMin = readPosition();
         if (adcMin < 0)
         {
+#ifdef PRINT_CAL
             PRINTLN("Could not read min ADC");
+#endif
             return false;
         }
         pCalibration_->adcMin = (uint16_t)adcMin;
+#ifdef PRINT_CAL
         PRINTLN("ADC min: %d", pCalibration_->adcMin);
+#endif
         return true;
     }
 
@@ -295,11 +352,15 @@ namespace Hopper
         int16_t adcMax = readPosition();
         if (adcMax < 0)
         {
+#ifdef PRINT_CAL
             PRINTLN("Could not read max ADC");
+#endif
             return false;
         }
         pCalibration_->adcMax = (uint16_t)adcMax;
+#ifdef PRINT_CAL
         PRINTLN("ADC max: %d", pCalibration_->adcMax);
+#endif
         return true;
     }
 
@@ -320,13 +381,18 @@ namespace Hopper
         int16_t adcOpen = readPosition();
         if (adcOpen < 0)
         {
+#ifdef PRINT_CAL
             PRINTLN("Could not read open ADC");
+#endif
             currCalibrationStep_ = CalibrationStep::FAIL;
             return;
         }
-        PRINTLN("ADC Open: %d", adcOpen);
         pCalibration_->angleOpen = static_cast<int16_t>(adcToAngle(pCalibration_->adcMin, pCalibration_->adcMax, (uint16_t)adcOpen));
+        
+#ifdef PRINT_CAL
+        PRINTLN("ADC Open: %d", adcOpen);
         PRINTLN("Angle Open: %d", pCalibration_->angleOpen);
+#endif
 
         currCalibrationStep_ = CalibrationStep::SUCCESS;
 
@@ -344,13 +410,19 @@ namespace Hopper
         int16_t adcClosed = readPosition();
         if (adcClosed < 0)
         {
+#ifdef PRINT_CAL
             PRINTLN("Could not read closed ADC");
+#endif
             currCalibrationStep_ = CalibrationStep::FAIL;
             return;
         }
-        PRINTLN("ADC Closed: %d", adcClosed);
+
         pCalibration_->angleClosed = static_cast<int16_t>(adcToAngle(pCalibration_->adcMin, pCalibration_->adcMax, (uint16_t)adcClosed));
+        
+#ifdef PRINT_CAL
+        PRINTLN("ADC Closed: %d", adcClosed);
         PRINTLN("Angle Closed: %d", pCalibration_->angleClosed);
+#endif
 
         currCalibrationStep_ = CalibrationStep::WAIT_FOR_OPEN;
 

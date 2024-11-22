@@ -65,6 +65,8 @@ namespace Hopper
             void close(Commander commander);
             void toggle();
             HopperState getState();
+            void wiggle(Commander commander);
+            bool wiggleCustom(uint16_t angle, uint16_t stepMs);
 
             CalibrationStep getCalibrationStep(){ return currCalibrationStep_; }
             void startCalibration();
@@ -83,6 +85,7 @@ namespace Hopper
             Timer::SoftwareTimer timeoutTimer_;
             Timer::SoftwareTimer updateTimer_;
             Timer::SoftwareTimer calibrationTimer_;
+            Timer::SoftwareTimer wiggleTimer_;
             HopperCalibration* pCalibration_;
             Filter::LowPassFilter angleFilter_;
 

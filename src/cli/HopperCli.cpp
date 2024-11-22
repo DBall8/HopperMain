@@ -21,7 +21,7 @@ const static uint16_t RESP_TIMEOUT_MS = 60000;
 
 static void statusCmd(uint16_t argc, ArgV argv)
 {
-    PRINTLN("Hopper is %d", pDoor->getState());
+    PRINTLN("S: %d", pDoor->getState());
 }
 
 static void openCmd(uint16_t argc, ArgV argv)
@@ -104,7 +104,7 @@ static void wifiStatusCmd(uint16_t argc, ArgV argv)
 static void angleCmd(uint16_t argc, ArgV argv)
 {
     int32_t angle = str2int(argv[1]);
-    PRINTLN("Set to %d\n", angle);
+    PRINTLN("A: %d\n", angle);
     pDoor->command(Commander::LOCAL, angle);
 }
 
@@ -116,11 +116,43 @@ static void getCmd(uint16_t argc, ArgV argv)
     PRINTLN("%s", respBuffer);
 }
 
+static void espCmd(uint16_t argc, ArgV argv)
+{
+    if (argc != 2)
+    {
+        return;
+    }
+
+    if (argv[1][0] == 'p')
+    {
+        setEsp8Program(true);
+    }
+    else if (argv[1][0] =='r')
+    {
+        setEsp8Program(false);
+    }
+}
+
+static void wiggleCmd(uint16_t argc, ArgV argv)
+{
+    if (argc < 3)
+    {
+        pDoor->wiggle(Commander::LOCAL);
+    }
+    else
+    {
+        uint16_t angle = str2int(argv[1]);
+        uint16_t time = str2int(argv[2]);
+        PRINTLN("%d | %d", angle, time);
+        pDoor->wiggleCustom(angle, time);
+    }
+}
+
 const static Command commands[] =
 {
-    {.name = "STATUS", .function = &statusCmd},
-    {.name = "OPEN", .function = &openCmd},
-    {.name = "CLOSE", .function = &closeCmd},
+    {.name = "S", .function = &statusCmd},
+    {.name = "O", .function = &openCmd},
+    {.name = "C", .function = &closeCmd},
     //{.name = "CAL", .function = &calibrationCmd},
     {.name = ECHO_CMD_STR, .function = &echoCmd},
     {.name = ID_CMD_STR, .function = &idCmd},
@@ -128,6 +160,8 @@ const static Command commands[] =
     {.name = "WS", .function = &wifiStatusCmd},
     {.name = "A", .function = &angleCmd},
     {.name = GET_CMD_STR, .function = &getCmd},
+    {.name = "ESP", .function = &espCmd},
+    {.name = "WG", .function= &wiggleCmd},
 };
 const static uint8_t NUM_COMMANDS = sizeof(commands) / sizeof(commands[0]);
 

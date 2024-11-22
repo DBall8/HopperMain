@@ -14,6 +14,11 @@ using namespace Hopper;
 
 extern "C" void __cxa_pure_virtual() { while (1); }
 
+#define LED_FLASH_PERIOD_S 1
+#define SETUP_FAST_FLASH_PERIOD_MS 200
+#define SETUP_PAUSE_S 2
+#define NUM_SETUP_LED_FLASHES 3
+
 void setup();
 void loop();
 void updateButton();
@@ -22,8 +27,8 @@ void updateLed();
 static SoftwareTimer ticTimer(1, pTicHandler, pWdt);
 static SoftwareTimer flashTimer(1, pTicHandler);
 static SoftwareTimer buttonHoldTimer(1, pTicHandler);
-bool buttonHeld = false;
-bool resetLed = false;
+static bool buttonHeld = false;
+static uint8_t setupLedState = 0;
 
 int main(void)
 {
@@ -46,7 +51,7 @@ void setup()
     pWifiCli->enable();
     pDoor->init();
 
-    flashTimer.setPeriod(pTicHandler->secondsToTics(1));
+    flashTimer.setPeriod(pTicHandler->secondsToTics(LED_FLASH_PERIOD_S));
     flashTimer.enable();
 
     // PRINTLN("----------");
@@ -100,7 +105,7 @@ void updateButton()
         if (!buttonHeld)
         {
 #ifdef DEBUG
-            PRINTLN("BUTTON PRESSED");
+            PRINTLN("B");
 #endif
             pDoor->toggle();
         }
@@ -109,7 +114,28 @@ void updateButton()
     }
 }
 
-void updateLed()
+void ledSetupMode()
+{
+    if (flashTimer.hasPeriodPassed())
+    {
+        if (setupLedState < (NUM_SETUP_LED_FLASHES * 2))
+        {
+            pLed->set(((setupLedState % 2) == 1) ? L_LOW : L_HIGH);
+            flashTimer.setPeriodMs(SETUP_FAST_FLASH_PERIOD_MS);
+            flashTimer.enable();
+            setupLedState++;
+        }
+        else
+        {
+            pLed->set(L_LOW);
+            flashTimer.setPeriodS(SETUP_PAUSE_S);
+            flashTimer.enable();
+            setupLedState = 0;
+        }
+    }
+}
+
+void ledNormalMode(bool resetLed)
 {
     static bool isWifiConn = false;
     bool isWifiConnNew = pWifiCli->isConnected();
@@ -134,4 +160,34 @@ void updateLed()
         pLed->toggle();
         flashTimer.enable();
     }
+}
+
+void updateLed()
+{
+    static bool wasSetupMode = false;
+    bool setupMode = getSetupMode();
+
+    if (setupMode != wasSetupMode)
+    {
+        if (setupMode)
+        {
+            flashTimer.setPeriodMs(SETUP_FAST_FLASH_PERIOD_MS);
+            flashTimer.enable();
+            setupLedState = 0;
+        }
+        else
+        {
+            flashTimer.setPeriodS(LED_FLASH_PERIOD_S);
+            flashTimer.enable();
+        }
+        wasSetupMode = setupMode;
+    }
+
+    if (setupMode)
+    {
+        ledSetupMode();
+        return;
+    }
+
+    ledNormalMode(wasSetupMode);
 }

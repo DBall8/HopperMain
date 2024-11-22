@@ -20,6 +20,9 @@ extern Hopper::DoorController* pDoor;
 
 void initDevices();
 void checkErrors();
+void setEsp8Program(bool enabled);
+void setSetupMode(bool newSetupMode);
+bool getSetupMode();
 
 void debugTest();
 

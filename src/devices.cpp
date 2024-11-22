@@ -54,7 +54,7 @@ static Atmega328Timer ticTmr(Timer::TIMER_2, CTC, PRESCALE, TOP, &HandleTicInter
 
 
 // Construct main debug serial port
-const static uint8_t RX_BUFF_SIZE = 16;
+const static uint8_t RX_BUFF_SIZE = 32;
 const static uint8_t TX_BUFF_SIZE = 64;
 static uint8_t rxBuffer[RX_BUFF_SIZE];
 static uint8_t txBuffer[TX_BUFF_SIZE];
@@ -70,13 +70,12 @@ ISerial* pUart = &uart;
 // GPIOs
 static Atmega328Dio buttonDio(Port::D, 2, Mode::INPUT, Level::L_LOW, false, false);
 static Atmega328Dio servoSig(Port::D, 3, Mode::OUTPUT, Level::L_LOW, false, false);
-#ifdef PROG_WIFI
-static Atmega328Dio wifiTx(Port::D, 6, Mode::INPUT, Level::L_LOW, false, false);
-#else
+// static Atmega328Dio wifiTx(Port::D, 6, Mode::INPUT, Level::L_LOW, false, false);
 static Atmega328Dio wifiTx(Port::D, 6, Mode::OUTPUT, Level::L_LOW, false, false);
-#endif
 static Atmega328Dio wifiRx(Port::D, 7, Mode::INPUT, Level::L_LOW, false, true);
 static Atmega328Dio ledPin(Port::D, 5, Mode::OUTPUT, Level::L_HIGH, false, false);
+static Atmega328Dio wifiReset(Port::B, 0, Mode::OUTPUT, Level::L_HIGH, false, false);
+static Atmega328Dio wifiProgram(Port::B, 1, Mode::OUTPUT, Level::L_HIGH, false, false);
 
 IDio* pLed = &ledPin;
 
@@ -145,12 +144,12 @@ void initDevices()
     if (resetCause == ResetCause::WATCHDOG)
     {
         PRINTLN("!WDT!");
-        pWifiCli->logBackend("WDT_RESET");
+        pWifiCli->logBackend("WDT_R");
     }
     else if (resetCause == ResetCause::BROWN_OUT)
     {
         PRINTLN("!BO!");
-        pWifiCli->logBackend("WDT_BROWN_OUT");
+        pWifiCli->logBackend("WDT_BO");
     }
 
     pStorage->initialize();
@@ -174,6 +173,45 @@ void checkErrors()
     {
         PRINTLN("!RX OVF!");
     }
+}
+
+void setEsp8Program(bool enabled)
+{
+    if (enabled)
+    {
+        wifiTx.setInputMode(false);
+
+        // Pin dance to enter flash mode
+        wifiProgram.set(L_LOW);
+        DELAY(500);
+        wifiReset.set(L_LOW);
+        DELAY(500);
+        wifiReset.set(L_HIGH);
+        DELAY(500);
+        wifiProgram.set(L_HIGH);
+        PRINTLN(">P");
+    }
+    else
+    {
+        wifiTx.setOutputMode(L_HIGH);
+
+        // Reset esp
+        wifiReset.set(L_LOW);
+        DELAY(500);
+        wifiReset.set(L_HIGH);
+        PRINTLN(">R");
+    }
+}
+
+static bool setupMode = false;
+void setSetupMode(bool newSetupMode)
+{
+    setupMode = newSetupMode;
+}
+
+bool getSetupMode()
+{
+    return setupMode;
 }
 
 void debugTest()
